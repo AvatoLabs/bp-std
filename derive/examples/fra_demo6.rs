@@ -28,7 +28,7 @@ use derive::{
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ===================================================================
-    // 步骤 0-2: RPC 设置和 UTXO 准备
+    // 步骤 0-2: RPC 设置和 UTXO 准备 (保持不变)
     // ===================================================================
     let rpc = Client::new(
         "http://127.0.0.1:18443/wallet/legacy_true",
@@ -44,10 +44,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None,
         None,
     )?;
-    // --- 关键修正: Address 类型 ---
     let coinbase_addr_unchecked = rpc.get_new_address(None, Some(AddressType::Legacy))?;
     let coinbase_addr = coinbase_addr_unchecked.require_network(Network::Regtest)?;
-    rpc.generate_to_address(101, &coinbase_addr)?; // 现在类型匹配
+    rpc.generate_to_address(101, &coinbase_addr)?;
     let balance = rpc.get_balance(None, None)?;
     println!("Wallet balance: {} BTC", balance);
     let fund_utxo = rpc
@@ -57,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("没有足够的 UTXO (>= 0.001 BTC)");
 
     // ===================================================================
-    // 步骤 3-4: 密钥生成
+    // 步骤 3-4: 密钥生成 (保持不变)
     // ===================================================================
     let secp = Secp256k1::new();
     let internal_kp = Keypair::new(&secp, &mut rand::thread_rng());
@@ -80,32 +79,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let recv_pk = recv_kp.x_only_public_key().0;
 
     // ===================================================================
-    // 步骤 5-8: 地址生成
+    // 步骤 5-8: 地址生成 (现在会调用你修正后的 build_fra_script)
     // ===================================================================
-    // --- 关键修正: XOnlyPk 构造 ---
-    //let action = FraAction::Transfer {
-    //    asset_id: [0u8; 32],
-    //    amount: 1000,
-    //    receiver: XOnlyPk::from_byte_array(recv_pk.serialize()).unwrap(),
-    //    sender: XOnlyPk::from_byte_array(sender_pk.serialize()).unwrap(),
-    //};
-    // --- 关键修正: .into_inner() 已被废弃, 使用 .release() ---
-    //let leaf_script_bytes = build_fra_script(action).as_inner().to_vec();
-    //let script = ScriptBuf::from(leaf_script_bytes);
-    //println!("Leaf Script ({} bytes): {}", script.len(), script.to_hex_string());
-
-    // let action = ... (注释掉)
-    // let leaf_script_bytes = build_fra_script(action)... (注释掉)
-
-    // --- 手动、可靠地构建脚本字节码 ---
-    let mut leaf_script_bytes = Vec::new();
-    leaf_script_bytes.push(0x20); // OP_PUSHBYTES_32
-    leaf_script_bytes.extend_from_slice(&sender_pk.serialize());
-    leaf_script_bytes.push(0xad); // OP_CHECKSIGVERIFY
-    leaf_script_bytes.push(0x20); // OP_PUSHBYTES_32
-    leaf_script_bytes.extend_from_slice(&recv_pk.serialize());
-    leaf_script_bytes.push(0xac); // OP_CHECKSIG
-
+    let action = FraAction::Transfer {
+        asset_id: [0u8; 32],
+        amount: 1000,
+        receiver: XOnlyPk::from_byte_array(recv_pk.serialize()).unwrap(),
+        sender: XOnlyPk::from_byte_array(sender_pk.serialize()).unwrap(),
+    };
+    let leaf_script_bytes = build_fra_script(action).as_inner().to_vec();
     let script = ScriptBuf::from(leaf_script_bytes);
     println!("Leaf Script ({} bytes): {}", script.len(), script.to_hex_string());
 
@@ -114,18 +96,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fra_addr = Address::p2tr(&secp, internal_pk, spend_info.merkle_root(), Network::Regtest);
     println!("FRA Taproot 地址: {}", fra_addr);
 
-
     // ===================================================================
-    // 步骤 9-10: 交易注资
+    // 步骤 9-11: 交易注资和花费交易骨架构建 (保持不变)
     // ===================================================================
-    // --- 关键修正: RPC 地址类型 ---
     let rpc_address = Address::from_str(&fra_addr.to_string())?.assume_checked();
     let funding_txid = rpc.send_to_address(
         &rpc_address,
         Amount::from_sat(fund_utxo.amount.to_sat() - 10_000),
         None, None, None, None, None, None,
     )?;
-    rpc.generate_to_address(1, &coinbase_addr)?; // 现在类型匹配
+    rpc.generate_to_address(1, &coinbase_addr)?;
     println!("Funding TXID: {}", funding_txid);
     let funding_tx_raw = rpc.get_raw_transaction(&funding_txid, None)?;
     let (vout, prevout_value) = funding_tx_raw
@@ -140,9 +120,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vout,
     };
 
-    // ===================================================================
-    // 步骤 11: 构建花费交易
-    // ===================================================================
     let dest_addr_unchecked = rpc.get_new_address(None, Some(AddressType::Legacy))?;
     let dest_addr = dest_addr_unchecked.require_network(Network::Regtest)?;
     let mut spend_tx = Transaction {
@@ -165,7 +142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }];
 
     // ===================================================================
-    // 步骤 12: 计算 Sighash (使用修正后的 API)
+    // 步骤 12: 计算 Sighash (保持不变)
     // ===================================================================
     let mut sighasher = SighashCache::new(&spend_tx);
     let leaf_hash = taproot::TapLeafHash::from_script(&script, LeafVersion::TapScript);
@@ -178,10 +155,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )?;
 
     let msg = bitcoin::secp256k1::Message::from(sighash);
-    println!("Sighash (rust-bitcoin): {}", sighash.to_string()); // .to_hex_string() -> .to_string()
+    println!("Sighash (rust-bitcoin): {}", sighash.to_string());
 
     // ===================================================================
-    // 步骤 13: 签名并构建 Witness
+    // 步骤 13: 签名并构建 Witness (最终修正)
     // ===================================================================
     let sig_sender = secp.sign_schnorr(&msg, &sender_kp);
     let sig_receiver = secp.sign_schnorr(&msg, &recv_kp);
@@ -193,17 +170,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut witness = Witness::new();
 
     // --- 关键修正: Witness 顺序必须与脚本消耗顺序相反 ---
-    // 栈是后进先出(LIFO)。脚本先验证 sender，再验证 receiver。
-    // 所以 witness 必须先把 receiver 的签名推入，再推入 sender 的签名。
-    witness.push(sig_receiver.as_ref()); // 对应 <receiver_pk> OP_CHECKSIG
-    witness.push(sig_sender.as_ref());   // 对应 <sender_pk> OP_CHECKSIGVERIFY
+    // 新脚本: <sender_pk> OP_CHECKSIGVERIFY <receiver_pk> OP_CHECKSIG
+    // 1. 脚本先验证 sender，所以 sender_sig 必须在栈顶。
+    // 2. 为了让 sender_sig 在栈顶，它必须是最后一个被 push 的签名。
+    witness.push(sig_receiver.as_ref()); // 先推入 receiver 签名 (对应 OP_CHECKSIG)
+    witness.push(sig_sender.as_ref());   // 后推入 sender 签名 (对应 OP_CHECKSIGVERIFY)
 
     witness.push(script);
     witness.push(control_block.serialize());
     spend_tx.input[0].witness = witness;
 
     // ===================================================================
-    // 步骤 14: 广播交易
+    // 步骤 14: 广播交易 (保持不变)
     // ===================================================================
     let tx_hex = encode::serialize_hex(&spend_tx);
     println!("Final TX Hex: {}", tx_hex);
